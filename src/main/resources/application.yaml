@@ -103,6 +103,9 @@ dot:
     commission-cron: ${COMMISSION_CRON:0 5 0 * * *}
     summary-cron: ${SUMMARY_CRON:0 30 0 * * *}
     batch-size: 500
+    # How many closed days one commission run will catch up on, so a run after a long outage
+    # cannot take on unbounded work. Anything left over is picked up by the next run.
+    max-backfill-days: 30
     # lock-at-most-for is the crash guard: if the holding pod dies without releasing, the lock
     # expires after this and another pod can pick the job up on the next run.
     lock-at-most-for: PT30M
