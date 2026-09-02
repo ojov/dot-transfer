@@ -30,6 +30,7 @@
         <java.version>21</java.version>
         <shedlock.version>6.6.0</shedlock.version>
         <testcontainers.version>1.21.3</testcontainers.version>
+        <docker.api.version>1.41</docker.api.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -134,6 +135,27 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!--
+                          Testcontainers' Docker client negotiates an API version that current
+                          Docker Engines reject outright - they require 1.40+, and the handshake
+                          comes back HTTP 400 with an empty payload, which surfaces unhelpfully as
+                          "Could not find a valid Docker environment".
+
+                          `api.version` is docker-java's own property name, and it has to be a
+                          system property: the equivalent environment variables are not read.
+                          Pinning it here rather than asking every developer to export something
+                          keeps `mvn test` working on a fresh clone. 1.41 has been supported since
+                          Docker 20.10.
+                        -->
+                        <api.version>${docker.api.version}</api.version>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

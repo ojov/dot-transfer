@@ -1,0 +1,9 @@
+# Test profile. Chosen mainly so the `dev` seeder does not run - tests build the data they need.
+dot:
+  jobs:
+    # "-" is Spring's disabled-cron marker. Without it the real 00:05 and 00:30 triggers are live
+    # during a test run, so a suite that happened to run across midnight could fire a job mid-test
+    # and change data underneath an assertion. The jobs' logic is covered directly through their
+    # services instead.
+    commission-cron: "-"
+    summary-cron: "-"

@@ -38,8 +38,6 @@ public interface TransactionRepository
             """)
     List<Transaction> findUnassessed(@Param("date") LocalDate date, Pageable pageable);
 
-    long countByTransactionDateAndCommissionWorthyIsNull(LocalDate transactionDate);
-
     /**
      * The closed business days that still hold unassessed transactions, most recent first.
      *

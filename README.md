@@ -206,14 +206,50 @@ and readable names make the cause obvious.
 There is no `baseline-on-migrate`: an empty database is expected, which V1 then builds in full. A
 development database left over from the earlier `ddl-auto: update` should be dropped once.
 
-## Known gaps
+## Tests
 
-**Automated tests.** Not yet written. The intended coverage is unit tests for the fee and commission
+```bash
+./mvnw test
+```
+
+90 tests. Docker must be running — the database-backed tests use Testcontainers, which starts its
+own PostgreSQL. Nothing else needs to be set up first.
+
+They are layered, cheapest first:
+
+| Layer | What it covers | Cost |
+|---|---|---|
+| Unit (`FeeCalculator`, `MoneyUtil`, `BusinessClock`) | The money rules and the business-day boundary, as pure functions | ~0.1s, no Spring |
+| Service unit (`TransferServiceTest`) | Idempotency, the cross-instance insert race, failure recording — mocked, because these branches are triggered by collisions and crashes | ~0.4s |
+| Validation (`TransferValidationTest`) | The rules that stop a transfer happening at all, and that they record nothing | Testcontainers |
+| Web slice (`TransferControllerTest`) | Validation, the response envelope, exception-to-status mapping | ~1.3s, no database |
+| Repository slice (`TransactionRepositoryTest`) | Queries and constraints against the real Flyway schema | Testcontainers |
+| Integration (`TransferConcurrencyTest`, `CommissionServiceTest`, `DailySummaryServiceTest`) | Real threads, real committed transactions, real row locks | Testcontainers |
+
+**Not H2.** The Flyway baseline is Postgres-specific, so H2 would need a parallel migration set and
+the schema under test would stop being the schema that ships. More to the point, the behaviour most
+worth testing is `SELECT ... FOR UPDATE` under contention, which an in-memory substitute does not
+reproduce.
+
+The concurrency tests are the ones that earn their keep:
+
+- **No overdraw.** 30 simultaneous transfers against an account holding 1,000.00, each costing
+  100.50. Exactly 9 succeed, 21 are rejected, the closing balance is exactly 95.50.
+- **No deadlock.** 20 threads transferring in both directions between the same two accounts at once.
+  Locking in the order a transfer names its accounts would have each direction holding the row the
+  other needs; locking by account number instead means both queue the same way. Zero failures is the
+  assertion.
+- **Idempotency under contention.** The same key from 10 threads at once debits exactly once.
+- **Conservation.** Across 25 concurrent transfers, the only value leaving the pair of accounts is
+  the fees collected.
+
+These have teeth: replacing the pessimistic lock with a plain read makes
+`concurrentTransfersCannotOverdraw` fail — 5 transfers succeed instead of 9. The intended coverage is unit tests for the fee and commission
 math (including the cap boundary at exactly 20,000), `@DataJpaTest` for the specification filters and
 the idempotency constraint, `@WebMvcTest` for validation and the error envelope, and a Testcontainers
 integration test firing concurrent transfers at one account to assert no overdraw.
 
-In the meantime the behaviour above was verified by hand against a live Postgres.
+The behaviour above was also verified by hand against a live Postgres, end to end.
 
 **Transfer concurrency.** Account `1000000003` holding 1,000.00, hit with 30 simultaneous transfers
 of 100.00 (billed 100.50 each). Exactly 9 succeeded — 9 × 100.50 = 904.50, and a 10th would have
