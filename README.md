@@ -184,28 +184,49 @@ so a wedged pod is restarted while a merely busy one is only taken out of the lo
 connection pool is sized *per instance* (`DB_POOL_SIZE`, default 10) — N pods means N times that
 many connections at the database.
 
-**Schema changes are the one gap, and it is deliberate** — see below.
+**Schema changes are safe when instances start together.** Flyway owns the schema and takes an
+advisory lock for the duration of a migration: one instance migrates while the others wait, then all
+proceed against the same schema. Hibernate runs with `ddl-auto: validate`, so it only checks that
+the entities still match what is actually there and never alters anything — any drift between code
+and database fails fast at startup rather than at the first query that happens to hit it.
 
 ---
 
+## Schema
+
+Flyway owns it. `src/main/resources/db/migration/V1__baseline.sql` builds every table, index and
+constraint, including ShedLock's own table — which Hibernate cannot manage, because it is not an
+entity. Hibernate is set to `validate`.
+
+The baseline is written by hand rather than dumped, so each constraint carries a name that says what
+it protects (`uk_transactions_idempotency_key`) instead of a generated one
+(`uk6kplolsdtr3slnvx97xsy2kc8`). Violations surface by constraint name in logs and error handling,
+and readable names make the cause obvious.
+
+There is no `baseline-on-migrate`: an empty database is expected, which V1 then builds in full. A
+development database left over from the earlier `ddl-auto: update` should be dropped once.
+
 ## Known gaps
-
-Two things are deferred on purpose rather than overlooked.
-
-**Schema management.** `ddl-auto: update` is a development stopgap and is marked `TODO(flyway)`
-in `application.yaml`. It is unsafe when several instances start at once, because they race to alter
-the same schema. Flyway replaces it (with `ddl-auto: validate`) once the entity design is settled;
-Flyway takes a migration lock, which is what actually makes concurrent startup safe. `schema.sql`
-exists only to create ShedLock's own table, which Hibernate cannot manage because it is not an
-entity, and folds into the Flyway baseline at the same time.
 
 **Automated tests.** Not yet written. The intended coverage is unit tests for the fee and commission
 math (including the cap boundary at exactly 20,000), `@DataJpaTest` for the specification filters and
 the idempotency constraint, `@WebMvcTest` for validation and the error envelope, and a Testcontainers
 integration test firing concurrent transfers at one account to assert no overdraw.
 
-In the meantime the behaviour above was verified by hand against a live Postgres. The concurrency
-check: account `1000000003` holding 1,000.00, hit with 30 simultaneous transfers of 100.00
-(billed 100.50 each). Exactly 9 succeeded — 9 × 100.50 = 904.50, and a 10th would have needed
-1,005.00 — 21 were rejected as `INSUFFICIENT_FUND`, the closing balance was exactly 95.50, and no
-account anywhere went negative.
+In the meantime the behaviour above was verified by hand against a live Postgres.
+
+**Transfer concurrency.** Account `1000000003` holding 1,000.00, hit with 30 simultaneous transfers
+of 100.00 (billed 100.50 each). Exactly 9 succeeded — 9 × 100.50 = 904.50, and a 10th would have
+needed 1,005.00 — 21 were rejected as `INSUFFICIENT_FUND`, the closing balance was exactly 95.50,
+and no account anywhere went negative.
+
+**Job locking.** Two instances with a 15-second commission cron, over 7 ticks: 7 executions total,
+alternating between them, never both on the same tick. Without ShedLock that would have been 14.
+
+**Concurrent startup.** Two instances launched simultaneously against an empty database: one applied
+the migration, the other validated and proceeded, `flyway_schema_history` recorded exactly one
+migration, both served traffic, and the dev seeder ran once rather than twice.
+
+**Schema drift.** Renaming `transactions.billed_amount` in the database and restarting fails at
+startup with `Schema validation: missing column [billed_amount] in table [transactions]`, rather
+than starting and breaking on first use.
