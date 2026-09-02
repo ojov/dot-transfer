@@ -24,7 +24,8 @@ worth trying:
 | `1000000003` | Ada Obi | 1,000.00 | ACTIVE | `INSUFFICIENT_FUND` |
 | `1000000004` | Bola Ade | 75,000.00 | FROZEN | inactive-account rejection |
 
-API docs: **http://localhost:8080/docs** (Scalar) · health: `/actuator/health`
+API docs: **http://localhost:8080/docs** (Scalar) · health: `/actuator/health` · OpenAPI JSON:
+`/v3/api-docs`. The bare root redirects to the docs, since the service has no home page of its own.
 
 Set `APP_ENV=prod` to disable the seeder. All configuration is env-var driven — `DB_URL`,
 `DB_USERNAME`, `DB_PASSWORD`, `DB_POOL_SIZE`, `SERVER_PORT`, `BUSINESS_ZONE`, `COMMISSION_CRON`,

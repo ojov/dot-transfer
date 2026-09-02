@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 import java.util.UUID;
@@ -75,6 +76,18 @@ public class GlobalExceptionHandler {
     public DotApiResponse<ErrorDetails> handleMalformed(Exception ex) {
         return clientError(ResponseCode.INVALID_REQUEST,
                 "Request body or parameter could not be parsed", ex);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public DotApiResponse<ErrorDetails> handleNoResource(NoResourceFoundException ex) {
+        // Browsers probe for /favicon.ico and friends unprompted, and any typo'd URL lands here too.
+        // Without this handler these fall through to the catch-all below and are reported as 500s
+        // with a full stack trace - the wrong status, and enough routine noise to bury a real error.
+        // Logged at debug, with no stack: a missing resource is not a fault.
+        log.debug("No static resource for {}", ex.getResourcePath());
+        return DotApiResponse.failure(ResponseCode.RESOURCE_NOT_FOUND,
+                "No resource at /%s".formatted(ex.getResourcePath()));
     }
 
     // ---- Server errors (5xx): generic message + traceId, never the internal detail ------------

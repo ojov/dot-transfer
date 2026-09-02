@@ -56,6 +56,17 @@ spring:
       # spring.jackson.write.* (Jackson 2's `generator.*` group no longer exists).
       write-bigdecimal-as-plain: true
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+
+scalar:
+  # Pinned rather than left to the starter's default, so the documented URL and the served one
+  # cannot drift apart.
+  path: /docs
+  url: /v3/api-docs
+  page-title: dot-transfer API
+
 management:
   endpoints:
     web:

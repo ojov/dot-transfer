@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="dot-transfer">
+  <title>dot-transfer</title>
+  <!-- Three dots growing left to right: value moving from one account to another.
+       Deliberately simple - anything finer than this turns to mush at 16px. The trailing
+       dots are only lightly faded, because at true favicon size a low opacity against the
+       dark ground disappears entirely. -->
+  <rect width="64" height="64" rx="14" fill="#0F172A"/>
+  <circle cx="16" cy="32" r="5" fill="#34D399" opacity="0.55"/>
+  <circle cx="31" cy="32" r="6.75" fill="#34D399" opacity="0.8"/>
+  <circle cx="47" cy="32" r="9" fill="#34D399"/>
+</svg>
