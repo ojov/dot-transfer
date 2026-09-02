@@ -32,22 +32,26 @@ spring:
 
   jpa:
     hibernate:
-      # TODO(flyway): development stopgap only. `update` is unsafe when several instances start
-      # concurrently - they race to alter the same schema. This is replaced by Flyway
-      # (ddl-auto: validate) once the entity shape is signed off; Flyway takes a migration lock,
-      # which is what actually makes multi-instance startup safe.
-      ddl-auto: update
+      # Flyway owns the schema. `validate` only checks that the entities still match what is
+      # actually there - it never alters anything - so any drift between code and database fails
+      # fast at startup instead of at the first query that happens to hit the difference.
+      ddl-auto: validate
     properties:
       hibernate:
         jdbc:
           time_zone: UTC
     open-in-view: false
 
-  sql:
-    init:
-      # TODO(flyway): creates only ShedLock's own table, which Hibernate cannot manage because it
-      # is not an entity. Folded into V1__baseline.sql and this file deleted when Flyway lands.
-      mode: always
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Flyway takes an advisory lock for the duration of a migration, so several instances starting
+    # together is safe: one migrates while the others wait, then all proceed against the same
+    # schema. This is what `ddl-auto: update` could never give - it had them racing to alter the
+    # same tables.
+    #
+    # No baseline-on-migrate: this expects an empty database, which V1 then builds in full. A
+    # development database left over from the old `ddl-auto: update` should be dropped once.
 
   jackson:
     write:
@@ -99,6 +103,9 @@ dot:
     commission-cron: ${COMMISSION_CRON:0 5 0 * * *}
     summary-cron: ${SUMMARY_CRON:0 30 0 * * *}
     batch-size: 500
+    # How many closed days one commission run will catch up on, so a run after a long outage
+    # cannot take on unbounded work. Anything left over is picked up by the next run.
+    max-backfill-days: 30
     # lock-at-most-for is the crash guard: if the holding pod dies without releasing, the lock
     # expires after this and another pod can pick the job up on the next run.
     lock-at-most-for: PT30M

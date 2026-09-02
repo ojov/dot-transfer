@@ -18,11 +18,11 @@ import lombok.experimental.SuperBuilder;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Customer extends BaseEntity {
-    @Column(nullable = false)
+    @Column(nullable = false, length = 100)
     private String firstName;
-    @Column(nullable = false)
+    @Column(nullable = false, length = 100)
     private String lastName;
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false, unique = true, length = 255)
     private String email;
     @Column(nullable = false, unique = true, length = 15)
     private String phoneNumber;

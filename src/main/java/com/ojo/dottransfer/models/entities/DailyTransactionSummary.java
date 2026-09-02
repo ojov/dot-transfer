@@ -23,7 +23,8 @@ import java.time.LocalDate;
  */
 @Entity
 @Table(name = "daily_transaction_summaries",
-        uniqueConstraints = @UniqueConstraint(name = "uk_summary_date", columnNames = "summary_date"))
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_daily_summaries_date", columnNames = "summary_date"))
 @Getter
 @Setter
 @SuperBuilder

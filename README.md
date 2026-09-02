@@ -27,9 +27,46 @@ worth trying:
 API docs: **http://localhost:8080/docs** (Scalar) · health: `/actuator/health` · OpenAPI JSON:
 `/v3/api-docs`. The bare root redirects to the docs, since the service has no home page of its own.
 
-Set `APP_ENV=prod` to disable the seeder. All configuration is env-var driven — `DB_URL`,
+Set `APP_ENV=prod` to disable the seeder. All configuration is env-var driven: `DB_URL`,
 `DB_USERNAME`, `DB_PASSWORD`, `DB_POOL_SIZE`, `SERVER_PORT`, `BUSINESS_ZONE`, `COMMISSION_CRON`,
-`SUMMARY_CRON`.
+`SUMMARY_CRON`, `LOG_LEVEL`, and `DOCKER_COMPOSE_ENABLED` (off by default — see the comment in
+`application.yaml` for why Boot is not left to manage the database container).
+
+---
+
+## Calling the API from the browser
+
+The quickest way to exercise everything is the built-in [Scalar](https://scalar.com) UI at
+**http://localhost:8080/docs** — no Postman collection, no curl, and nothing to import. It reads the
+generated OpenAPI document at `/v3/api-docs`, so it is always in step with the code.
+
+Endpoints are grouped in the sidebar as **Transfers**, **Transactions** and **Admin – jobs**
+(`⌘K` searches them). Each operation has a **Test Request** button that sends a real call to the
+running application — the server is pre-filled as `http://localhost:8080`, so there is nothing to
+configure before the first request.
+
+A suggested run-through against the seeded accounts:
+
+1. **Transfers → `POST /api/v1/transfers`.** Send `1000000001` → `1000000002` for `50000.00`.
+   Check the response: `transactionFee` is `100.00` (capped, not 250.00) and `billedAmount` is
+   `50100.00`, because the sender bears the fee.
+2. **Send it again with an `Idempotency-Key` header**, then a third time with the *same* key. The
+   second and third responses carry the same `transactionReference`, and the balance moves once.
+3. **Trigger the rejection path.** Transfer `5000.00` from `1000000003`, which holds only `1000.00`.
+   You still get a 201 with a stored transaction — `status` is `INSUFFICIENT_FUND` and the message
+   names the balance it needed. Then try `1000000004`, which is FROZEN, for a 409 that records
+   nothing.
+4. **Admin – jobs → `POST /api/v1/admin/jobs/commission`.** Pass today's `date` so it picks up what
+   you just created. The response reports how many transactions were assessed and the total
+   commission — 20% of each fee. Run it a second time: `assessed` is `0`, because the run is
+   idempotent.
+5. **Transactions → `GET /api/v1/transactions/summary`.** Today's totals, flagged `provisional`.
+   Note that `totalFees` counts only successful transfers, so the fee on the rejected one is absent.
+6. **Transactions → `GET /api/v1/transactions`.** Filter by `status`, by `accountNumber` (try
+   `1000000002` — it matches transfers in both directions), and by a `from`/`to` date range.
+
+Every request goes to the real service against the real database, so the balances you see move are
+genuinely moving.
 
 ---
 
@@ -119,8 +156,37 @@ nightly job does, and omitting it on `/summary` snapshots yesterday. Both are sa
 commission finds nothing outstanding, and a summary replaces its day's snapshot rather than
 duplicating it.
 
-Unsecured — authentication is outside this exercise's scope, and they are grouped under `/admin` so
-restricting them is one routing rule.
+Unsecured, like everything else here — see [Security](#security). They are grouped under `/admin`
+so restricting them later is one routing rule.
+
+---
+
+## Security
+
+**Spring Security is intentionally left out.** There is no authentication or authorisation anywhere
+in this service: every endpoint is open, including the `/api/v1/admin/jobs/*` triggers that run the
+scheduled operations on demand.
+
+That is a deliberate scoping decision rather than an oversight. The brief asks for transfer
+processing, a transaction query, commission assessment and daily summaries, and is scored on clean
+code, design patterns, testing and production readiness. Adding authentication would have meant
+credential storage, token issuing and refresh, and a filter chain — a large amount of surface area
+that would have obscured the parts actually being assessed, and it would have made the API tedious
+to explore in the Scalar UI above.
+
+What it would take to add, roughly in order:
+
+- The admin job triggers are already grouped under a single `/api/v1/admin/**` prefix precisely so
+  restricting them is one matcher rather than a scattered set of them.
+- Service-to-service callers would want an API key filter; a human dashboard would want
+  OAuth2/JWT resource-server configuration. Both attach at the filter chain without touching the
+  services, because no business logic currently reads a caller identity.
+- `Account` has no owner concept beyond its `Customer`, so authorising "may this caller move money
+  from this account?" would mean threading a principal into `TransferService` and checking it
+  against `Account.customer` before the debit.
+
+Nothing in the current design blocks any of that — but none of it is present, and the service should
+not be exposed on an untrusted network as it stands.
 
 ---
 
@@ -184,28 +250,83 @@ so a wedged pod is restarted while a merely busy one is only taken out of the lo
 connection pool is sized *per instance* (`DB_POOL_SIZE`, default 10) — N pods means N times that
 many connections at the database.
 
-**Schema changes are the one gap, and it is deliberate** — see below.
+**Schema changes are safe when instances start together.** Flyway owns the schema and takes an
+advisory lock for the duration of a migration: one instance migrates while the others wait, then all
+proceed against the same schema. Hibernate runs with `ddl-auto: validate`, so it only checks that
+the entities still match what is actually there and never alters anything — any drift between code
+and database fails fast at startup rather than at the first query that happens to hit it.
 
 ---
 
-## Known gaps
+## Schema
 
-Two things are deferred on purpose rather than overlooked.
+Flyway owns it. `src/main/resources/db/migration/V1__baseline.sql` builds every table, index and
+constraint, including ShedLock's own table — which Hibernate cannot manage, because it is not an
+entity. Hibernate is set to `validate`.
 
-**Schema management.** `ddl-auto: update` is a development stopgap and is marked `TODO(flyway)`
-in `application.yaml`. It is unsafe when several instances start at once, because they race to alter
-the same schema. Flyway replaces it (with `ddl-auto: validate`) once the entity design is settled;
-Flyway takes a migration lock, which is what actually makes concurrent startup safe. `schema.sql`
-exists only to create ShedLock's own table, which Hibernate cannot manage because it is not an
-entity, and folds into the Flyway baseline at the same time.
+The baseline is written by hand rather than dumped, so each constraint carries a name that says what
+it protects (`uk_transactions_idempotency_key`) instead of a generated one
+(`uk6kplolsdtr3slnvx97xsy2kc8`). Violations surface by constraint name in logs and error handling,
+and readable names make the cause obvious.
 
-**Automated tests.** Not yet written. The intended coverage is unit tests for the fee and commission
-math (including the cap boundary at exactly 20,000), `@DataJpaTest` for the specification filters and
-the idempotency constraint, `@WebMvcTest` for validation and the error envelope, and a Testcontainers
-integration test firing concurrent transfers at one account to assert no overdraw.
+There is no `baseline-on-migrate`: an empty database is expected, which V1 then builds in full. A
+development database left over from the earlier `ddl-auto: update` should be dropped once.
 
-In the meantime the behaviour above was verified by hand against a live Postgres. The concurrency
-check: account `1000000003` holding 1,000.00, hit with 30 simultaneous transfers of 100.00
-(billed 100.50 each). Exactly 9 succeeded — 9 × 100.50 = 904.50, and a 10th would have needed
-1,005.00 — 21 were rejected as `INSUFFICIENT_FUND`, the closing balance was exactly 95.50, and no
-account anywhere went negative.
+---
+
+## Tests
+
+```bash
+./mvnw test
+```
+
+90 tests. Docker must be running — the database-backed tests use Testcontainers, which starts its
+own PostgreSQL. Nothing else needs to be set up first.
+
+They are layered, cheapest first:
+
+| Layer | What it covers | Cost |
+|---|---|---|
+| Unit (`FeeCalculator`, `MoneyUtil`, `BusinessClock`) | The money rules and the business-day boundary, as pure functions | ~0.1s, no Spring |
+| Service unit (`TransferServiceTest`) | Idempotency, the cross-instance insert race, failure recording — mocked, because these branches are triggered by collisions and crashes | ~0.4s, no Spring |
+| Web slice (`TransferControllerTest`) | Request validation, the response envelope, exception-to-status mapping | ~1.3s, no database |
+| Repository slice (`TransactionRepositoryTest`) | Queries and constraints against the real Flyway schema | Testcontainers |
+| Integration (`TransferValidationTest`, `TransferConcurrencyTest`, `CommissionServiceTest`, `DailySummaryServiceTest`) | The rules that refuse a transfer, then real threads, real committed transactions, real row locks | Testcontainers |
+| Context (`DottransferApplicationTests`) | Boots the whole application — fails if a migration and the entities have drifted apart | Testcontainers |
+
+**Not H2.** The Flyway baseline is Postgres-specific, so H2 would need a parallel migration set and
+the schema under test would stop being the schema that ships. More to the point, the behaviour most
+worth testing is `SELECT ... FOR UPDATE` under contention, which an in-memory substitute does not
+reproduce.
+
+The concurrency tests are the ones that earn their keep:
+
+- **No overdraw.** 30 simultaneous transfers against an account holding 1,000.00, each costing
+  100.50. Exactly 9 succeed, 21 are rejected, the closing balance is exactly 95.50.
+- **No deadlock.** 20 threads transferring in both directions between the same two accounts at once.
+  Locking in the order a transfer names its accounts would have each direction holding the row the
+  other needs; locking by account number instead means both queue the same way. Zero failures is the
+  assertion.
+- **Idempotency under contention.** The same key from 10 threads at once debits exactly once.
+- **Conservation.** Across 25 concurrent transfers, the only value leaving the pair of accounts is
+  the fees collected.
+
+These have teeth: replacing the pessimistic lock with a plain read makes
+`concurrentTransfersCannotOverdraw` fail — 5 transfers succeed instead of 9. A concurrency test that
+passes with the safety mechanism removed would be worse than no test at all.
+
+### Checked by hand as well
+
+Three behaviours need more than one running application, so they have no automated equivalent.
+Each was verified manually against a live Postgres:
+
+**Job locking.** Two instances with a 15-second commission cron, over 7 ticks: 7 executions total,
+alternating between them, never both on the same tick. Without ShedLock that would have been 14.
+
+**Concurrent startup.** Two instances launched simultaneously against an empty database: one applied
+the migration, the other validated and proceeded, `flyway_schema_history` recorded exactly one
+migration, both served traffic, and the dev seeder ran once rather than twice.
+
+**Schema drift.** Renaming `transactions.billed_amount` in the database and restarting fails at
+startup with `Schema validation: missing column [billed_amount] in table [transactions]`, rather
+than starting and breaking on first use.

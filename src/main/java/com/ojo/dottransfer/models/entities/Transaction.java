@@ -91,12 +91,14 @@ public class Transaction extends BaseEntity {
     @Column(nullable = false, length = 3)
     private String currency;
 
+    @Column(length = 255)
     private String description;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private TransactionStatus status;
 
+    @Column(length = 255)
     private String statusMessage;
 
     /**

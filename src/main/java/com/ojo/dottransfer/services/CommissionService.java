@@ -86,12 +86,11 @@ public class CommissionService {
 
     /** Assesses one named day. Used by the manual trigger, and safe to re-run. */
     public CommissionRunResponse assessDay(LocalDate date) {
-        LocalDate target = date != null ? date : businessClock.previousDay();
-        Totals totals = assess(target);
+        Totals totals = assess(date);
         log.info("Commission run for {}: assessed {}, commission-worthy {}, total commission {}",
-                target, totals.assessed(), totals.commissionWorthy(),
+                date, totals.assessed(), totals.commissionWorthy(),
                 MoneyUtil.normalize(totals.commission()));
-        return toResponse(List.of(target), totals);
+        return toResponse(List.of(date), totals);
     }
 
     private Totals assess(LocalDate date) {

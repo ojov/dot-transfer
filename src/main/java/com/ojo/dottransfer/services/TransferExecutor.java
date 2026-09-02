@@ -55,6 +55,12 @@ public class TransferExecutor {
         if (sourceNumber.equals(destinationNumber)) {
             throw new InvalidRequestException("Source and destination accounts must be different");
         }
+        // Re-checked here rather than trusted from the controller's bean validation. This is the
+        // only path that moves money, and a zero or negative amount reaching it would transfer
+        // nothing while still recording a successful transaction.
+        if (!MoneyUtil.isPositive(request.amount())) {
+            throw new InvalidRequestException("Transfer amount must be greater than zero");
+        }
 
         // Both rows are locked before either balance is read. The lock order is by account number,
         // never by the direction of the transfer, so A->B and a simultaneous B->A queue behind each
