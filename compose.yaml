@@ -12,7 +12,7 @@ services:
     volumes:
       - dot_postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dotuser -d dot"]
+      test: ["CMD-SHELL", "pg_isready -U dotuser -d dotdb"]
       interval: 10s
       timeout: 5s
       retries: 5

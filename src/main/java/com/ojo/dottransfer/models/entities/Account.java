@@ -31,7 +31,7 @@ public class Account extends BaseEntity {
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 20)
     private AccountStatus status;
 
-    @Column(nullable = false, precision = 19, scale = 4)
+    @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
 
     @Builder.Default

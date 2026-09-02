@@ -1,20 +1,61 @@
+server:
+  port: ${SERVER_PORT:8080}
+  # Rolling restarts terminate pods mid-request. Graceful shutdown lets an in-flight transfer
+  # finish committing instead of being severed between the debit and the credit.
+  shutdown: graceful
+
 spring:
+  profiles:
+    # `dev` enables the sample-data seeder. Set APP_ENV=prod anywhere real.
+    active: ${APP_ENV:dev}
   application:
     name: dottransfer
-  data:
-    jpa:
-      repositories:
-        enabled: on
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5437/dotdb}
+    username: ${DB_USERNAME:dotuser}
+    password: ${DB_PASSWORD:dotpassword}
+    hikari:
+      # Sized per instance, not per cluster: with N pods the database sees N x this many
+      # connections, so this stays small deliberately.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+
+  docker:
+    compose:
+      # Off by default. When enabled, Boot derives the datasource from compose.yaml and silently
+      # overrides spring.datasource.* above - convenient locally, but it makes configuration
+      # unpredictable anywhere the database is external (which is every real deployment).
+      # Run `docker compose up -d` yourself; flip this only if you want Boot to manage it.
+      enabled: ${DOCKER_COMPOSE_ENABLED:false}
+
   jpa:
+    hibernate:
+      # TODO(flyway): development stopgap only. `update` is unsafe when several instances start
+      # concurrently - they race to alter the same schema. This is replaced by Flyway
+      # (ddl-auto: validate) once the entity shape is signed off; Flyway takes a migration lock,
+      # which is what actually makes multi-instance startup safe.
+      ddl-auto: update
     properties:
       hibernate:
         jdbc:
           time_zone: UTC
     open-in-view: false
-  datasource:
-    url: jdbc:postgresql://localhost:5437/dotdb
-    username: dotuser
-    password: dotpassword
+
+  sql:
+    init:
+      # TODO(flyway): creates only ShedLock's own table, which Hibernate cannot manage because it
+      # is not an entity. Folded into V1__baseline.sql and this file deleted when Flyway lands.
+      mode: always
+
+  jackson:
+    write:
+      # Money is BigDecimal - always emit plain decimal notation, never scientific, so clients
+      # parsing JSON numbers are never surprised. In Boot 4 / Jackson 3 this lives under
+      # spring.jackson.write.* (Jackson 2's `generator.*` group no longer exists).
+      write-bigdecimal-as-plain: true
+
 management:
   endpoints:
     web:
@@ -25,4 +66,33 @@ management:
   endpoint:
     health:
       probes:
+        # Separate liveness and readiness so Kubernetes restarts a wedged pod without pulling
+        # a merely-busy one out of the load balancer.
         enabled: true
+
+dot:
+  business:
+    # Every instance must agree on where a "day" starts, or two pods disagree about which day a
+    # transaction belongs to and the daily summary silently splits. Fixed, explicit, configurable.
+    zone: ${BUSINESS_ZONE:Africa/Lagos}
+
+  fee:
+    percent: 0.5              # transaction fee = 0.5% of the amount...
+    cap: 100                  # ...capped at 100 (the cap binds from amount >= 20,000)
+    commission-percent: 20    # commission = 20% of the transaction fee
+    commission-worthy-min-fee: 0  # a successful transfer is commission-worthy when fee > this
+
+  jobs:
+    # Commission runs first and the summary reads its output, so the summary must start later.
+    # Both are cron-scheduled per instance but guarded by ShedLock, so exactly one pod executes.
+    commission-cron: ${COMMISSION_CRON:0 5 0 * * *}
+    summary-cron: ${SUMMARY_CRON:0 30 0 * * *}
+    batch-size: 500
+    # lock-at-most-for is the crash guard: if the holding pod dies without releasing, the lock
+    # expires after this and another pod can pick the job up on the next run.
+    lock-at-most-for: PT30M
+    lock-at-least-for: PT10S
+
+logging:
+  level:
+    com.ojo.dottransfer: ${LOG_LEVEL:INFO}
